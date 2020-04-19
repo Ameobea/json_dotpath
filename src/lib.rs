@@ -145,14 +145,7 @@ pub trait DotPaths {
     /// - `<` ... first element of an array (same as `0`)
     fn dot_set<T>(&mut self, path: &str, value: T) -> Result<()>
     where
-        T: Serialize,
-    {
-        // This is a default implementation.
-        // Vec uses a custom implementation to support the special syntax.
-
-        let _ = self.dot_replace::<T, Value>(path, value)?; // Original value is dropped
-        Ok(())
-    }
+        T: Serialize;
 
     /// Replace a value by path with a new value.
     /// The value types do not have to match.
@@ -321,6 +314,7 @@ impl DotPaths for serde_json::Value {
         match self {
             // Special case for Vec, which implements additional path symbols
             Value::Array(a) => a.dot_set(path, value),
+            Value::Object(m) => m.dot_set(path, value),
             _ => {
                 let _ = self.dot_replace::<T, Value>(path, value)?; // Original value is dropped
                 Ok(())
@@ -412,6 +406,29 @@ impl DotPaths for serde_json::Map<String, serde_json::Value> {
         }
     }
 
+    fn dot_set<T>(&mut self, path: &str, value: T) -> Result<()> where
+        T: Serialize {
+        let (my, sub) = path_split(path);
+
+        if my.is_empty() {
+            return Err(InvalidKey(my));
+        }
+
+        if let Some(subpath) = sub {
+            if self.contains_key(&my) {
+                self.get_mut(&my).unwrap().dot_set(subpath, value)
+            } else {
+                // Build new subpath
+                let _ = self.insert(my, new_by_path_root(subpath, value)?); // always returns None here
+                Ok(())
+            }
+        } else {
+            let packed = serde_json::to_value(value)?;
+            self.insert(my, packed);
+            Ok(())
+        }
+    }
+
     fn dot_replace<NEW, OLD>(&mut self, path: &str, value: NEW) -> Result<Option<OLD>>
     where
         NEW: Serialize,
@@ -425,10 +442,7 @@ impl DotPaths for serde_json::Map<String, serde_json::Value> {
 
         if let Some(subpath) = sub {
             if self.contains_key(&my) {
-                match self.get_mut(&my) {
-                    None => Ok(None),
-                    Some(m) => m.dot_replace(subpath, value),
-                }
+                self.get_mut(&my).unwrap().dot_replace(subpath, value)
             } else {
                 // Build new subpath
                 let _ = self.insert(my, new_by_path_root(subpath, value)?); // always returns None here
@@ -487,7 +501,9 @@ impl DotPaths for Vec<serde_json::Value> {
         let index: usize = match my.as_str() {
             ">" => self.len() - 1, // non-empty checked above
             "<" => 0,
-            _ => my.parse().map_err(|_| InvalidKey(my))?,
+            _ => my.parse().map_err(|_| {
+                InvalidKey(my)
+            })?,
         };
 
         if index >= self.len() {
@@ -524,7 +540,9 @@ impl DotPaths for Vec<serde_json::Value> {
                 }
             }
             "<" => 0,
-            _ => my.parse().map_err(|_| InvalidKey(my))?,
+            _ => my.parse().map_err(|_| {
+                InvalidKey(my)
+            })?,
         };
 
         if index > self.len() {
@@ -593,14 +611,23 @@ impl DotPaths for Vec<serde_json::Value> {
             _ if my.starts_with('>') => {
                 // insert after
                 insert = true;
-                (&my[1..]).parse::<usize>().map_err(|_| InvalidKey(my_s))? + 1
+                (&my[1..]).parse::<usize>()
+                    .map_err(|_| {
+                        InvalidKey(my_s)
+                    })? + 1
             }
             _ if my.starts_with('<') => {
                 // insert before
                 insert = true;
-                (&my[1..]).parse::<usize>().map_err(|_| InvalidKey(my_s))?
+                (&my[1..]).parse::<usize>()
+                    .map_err(|_| {
+                        InvalidKey(my_s)
+                    })?
             }
-            _ => my.parse::<usize>().map_err(|_| InvalidKey(my_s))?,
+            _ => my.parse::<usize>()
+                .map_err(|_| {
+                    InvalidKey(my_s)
+                })?,
         };
 
         if index > self.len() {
@@ -657,7 +684,9 @@ impl DotPaths for Vec<serde_json::Value> {
                 }
             }
             "<" => 0,
-            _ => my.parse().map_err(|_| InvalidKey(my))?,
+            _ => my.parse().map_err(|_| {
+                InvalidKey(my)
+            })?,
         };
 
         if index >= self.len() {
@@ -700,7 +729,9 @@ impl DotPaths for Vec<serde_json::Value> {
                 }
             }
             "<" => 0,
-            _ => my.parse().map_err(|_| InvalidKey(my))?,
+            _ => my.parse().map_err(|_| {
+                InvalidKey(my)
+            })?,
         };
 
         if index >= self.len() {
@@ -836,6 +867,46 @@ mod tests {
         assert_eq!(json!([[["first"]]]), vec);
         vec.dot_set(">>.<<.>>", "second").unwrap();
         assert_eq!(json!([[["first"]], [["second"]]]), vec);
+    }
+
+    #[test]
+    fn array_append1() {
+        let mut test_array = Value::Array(vec![]);
+        test_array.dot_set(">>", Value::String(String::from("Go to class"))).unwrap();
+        test_array.dot_set(">>", Value::String(String::from("Fish"))).unwrap();
+        assert_eq!(json!(["Go to class","Fish"]), test_array);
+    }
+
+    #[test]
+    fn array_append2() {
+        let mut test_array = Value::Array(vec![]);
+        test_array.dot_set("+", Value::String(String::from("Go to class"))).unwrap();
+        test_array.dot_set("+", Value::String(String::from("Fish"))).unwrap();
+        assert_eq!(json!(["Go to class","Fish"]), test_array);
+    }
+
+    #[test]
+    fn array_append_in_object1() {
+        let mut test_inner_array = Value::Null;
+
+        test_inner_array.dot_set("todos.+", Value::String(String::from("Go to class"))).unwrap();
+        assert_eq!(json!({"todos" : ["Go to class"] }), test_inner_array);
+
+        test_inner_array.dot_set("todos.+", Value::String(String::from("Fish"))).unwrap();
+        assert_eq!(json!({"todos" : ["Go to class","Fish"] }), test_inner_array);
+    }
+
+    #[test]
+    fn array_append_in_object2() {
+        let mut test_inner_array = Value::Null;
+        test_inner_array.dot_set("name", Value::String(String::from("Google"))).unwrap();
+        assert_eq!(json!({"name" : "Google"}), test_inner_array);
+
+        test_inner_array.dot_set("todos.+", Value::String(String::from("Go to class"))).unwrap();
+        assert_eq!(json!({"name" : "Google", "todos" : ["Go to class"] }), test_inner_array);
+
+        test_inner_array.dot_set("todos.+", Value::String(String::from("Fish"))).unwrap();
+        assert_eq!(json!({"name" : "Google", "todos" : ["Go to class","Fish"] }), test_inner_array);
     }
 
     #[test]
