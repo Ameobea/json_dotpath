@@ -2,41 +2,34 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::{Map, Value};
 use std::mem;
+use thiserror::Error;
 
 #[cfg(test)]
 #[macro_use]
 extern crate serde_derive;
-#[macro_use]
-extern crate failure;
 
 /// Errors from dot_path methods
-#[derive(Debug, Fail)]
+#[derive(Debug, Error)]
 pub enum Error {
     /// Path hit a value in the JSON object that is not array or map
     /// and could not continue the traversal.
     ///
     /// (e.g. `foo.bar` in `{"foo": 123}`)
-    #[fail(display = "Unexpected value reached while traversing path")]
+    #[error("Unexpected value reached while traversing path")]
     BadPathElement,
 
     /// Array index out of range
-    #[fail(display = "Invalid array index: {}", _0)]
+    #[error("Invalid array index: {0}")]
     BadIndex(usize),
 
     /// Invalid (usually empty) key used in Map or Array.
     /// If the key is valid but out of bounds, `BadIndex` will be used.
-    #[fail(display = "Invalid key: {}", _0)]
+    #[error("Invalid key: {0}")]
     InvalidKey(String),
 
     /// Error serializing or deserializing a value
-    #[fail(display = "Invalid array or map key")]
-    SerdeError(#[fail(cause)] serde_json::Error),
-}
-
-impl From<serde_json::Error> for Error {
-    fn from(e: serde_json::Error) -> Self {
-        Error::SerdeError(e)
-    }
+    #[error("Invalid array or map key")]
+    SerdeError(#[from] serde_json::Error),
 }
 
 use crate::Error::{BadIndex, BadPathElement, InvalidKey};

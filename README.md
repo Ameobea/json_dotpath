@@ -4,6 +4,10 @@ Access members of nested JSON arrays and objects using "dotted paths".
 
 ## Changes
 
+### 1.0.3
+
+Replaced `failure` with `thiserror`, implement `std::error::Error` for the error type.
+
 ### 1.0.0
 
 The API changed to return `Result<Option<T>>` instead of panicking internally on error.

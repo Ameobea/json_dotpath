@@ -1,6 +1,6 @@
 [package]
 name = "json_dotpath"
-version = "1.0.2"
+version = "1.0.3"
 authors = ["Ondřej Hruška <ondra@ondrovo.com>"]
 edition = "2018"
 license = "MIT"
@@ -16,5 +16,4 @@ categories = [
 serde = "1"
 serde_derive = "1"
 serde_json = "1"
-failure = "0.1.7"
-failure_derive = "0.1.7"
+thiserror = "1"
