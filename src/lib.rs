@@ -112,6 +112,27 @@ pub trait DotPaths {
         self.dot_get_or(path, T::default())
     }
 
+    /// Check if a value exists under a dotted path.
+    /// Returns error if the path is invalid, a string key was used to index into an array.
+    ///
+    /// # Special symbols
+    /// - `>` ... last element of an array
+    /// - `<` ... first element of an array (same as `0`)
+    fn dot_has_checked(&self, path: &str) -> Result<bool>;
+
+    /// Check if a value exists under a dotted path.
+    /// Returns false also when the path is invalid.
+    ///
+    /// Use `dot_has_checked` if you want to distinguish non-existent values from path errors.
+    ///
+    /// # Special symbols
+    /// - `>` ... last element of an array
+    /// - `<` ... first element of an array (same as `0`)
+    fn dot_has(&self, path: &str) -> bool {
+        self.dot_has_checked(path)
+            .unwrap_or_default()
+    }
+
     /// Get a mutable reference to an item
     ///
     /// If the path does not exist but a value on the path can be created (i.e. because the path
@@ -229,6 +250,22 @@ impl DotPaths for serde_json::Value {
         }
     }
 
+    fn dot_has_checked(&self, path: &str) -> Result<bool> {
+        match self {
+            Value::Array(vec) => vec.dot_has_checked(path),
+            Value::Object(map) => map.dot_has_checked(path),
+            Value::Null => Ok(false),
+            _ => {
+                if path.is_empty() {
+                    Ok(true)
+                } else {
+                    // Path continues, but we can't traverse into a scalar
+                    Ok(false)
+                }
+            }
+        }
+    }
+
     fn dot_get_mut(&mut self, path: &str) -> Result<&mut Value> {
         match self {
             Value::Array(vec) => vec.dot_get_mut(path),
@@ -261,7 +298,7 @@ impl DotPaths for serde_json::Value {
             Value::Object(map) => map.dot_replace(path, value),
             Value::Null => {
                 // spawn new
-                mem::replace(self, new_by_path_root(path, value)?);
+                *self = new_by_path_root(path, value)?;
                 Ok(None)
             }
             _ => {
@@ -362,6 +399,26 @@ impl DotPaths for serde_json::Map<String, serde_json::Value> {
             match self.get(&my).null_to_none() {
                 None => Ok(None),
                 Some(m) => Ok(Some(serde_json::from_value::<T>(m.to_owned())?)),
+            }
+        }
+    }
+
+    fn dot_has_checked(&self, path: &str) -> Result<bool> {
+        let (my, sub) = path_split(path);
+
+        if my.is_empty() {
+            return Err(InvalidKey(my));
+        }
+
+        if let Some(sub_path) = sub {
+            match self.get(&my).null_to_none() {
+                None => Ok(false),
+                Some(child) => child.dot_has_checked(sub_path),
+            }
+        } else {
+            match self.get(&my).null_to_none() {
+                None => Ok(false),
+                Some(_) => Ok(true),
             }
         }
     }
@@ -512,6 +569,43 @@ impl DotPaths for Vec<serde_json::Value> {
             match self.get(index).null_to_none() {
                 None => Ok(None),
                 Some(value) => Ok(serde_json::from_value(value.to_owned())?),
+            }
+        }
+    }
+
+    fn dot_has_checked(&self, path: &str) -> Result<bool> {
+        let (my, sub) = path_split(path);
+
+        if my.is_empty() {
+            return Err(InvalidKey(my));
+        }
+
+        if self.is_empty() {
+            return Ok(false);
+        }
+
+        let index: usize = match my.as_str() {
+            ">" => self.len() - 1, // non-empty checked above
+            "<" => 0,
+            _ => my.parse().map_err(|_| {
+                InvalidKey(my)
+            })?,
+        };
+
+        if index >= self.len() {
+            return Ok(false);
+        }
+
+        if let Some(subpath) = sub {
+            match self.get(index).null_to_none() {
+                None => Ok(false),
+                Some(child) => child.dot_has_checked(subpath),
+            }
+        } else {
+            match self.get(index).null_to_none() {
+                // null is reported as unset
+                None => Ok(false),
+                Some(_) => Ok(true),
             }
         }
     }
@@ -1101,7 +1195,7 @@ mod tests {
         // Borrow Null as mutable
         let mut obj = Value::Null;
         let m = obj.dot_get_mut("").unwrap();
-        std::mem::replace(m, Value::from(123));
+        *m = Value::from(123);
         assert_eq!(Value::from(123), obj);
 
         // Create a parents path
@@ -1141,6 +1235,30 @@ mod tests {
         m.dot_set("dog", "cat").unwrap();
 
         assert_eq!(json!([{"foo": {"bar": {"dog": "cat"}}}]), Value::Array(obj));
+    }
+
+    #[test]
+    fn has() {
+        let value = json!({
+            "one": "two",
+            "x": [1, 2, {"foo": 123}]
+        });
+        assert!(value.dot_has("one"));
+        assert!(!value.dot_has("two"));
+        assert!(value.dot_has("x"));
+        assert!(value.dot_has("x.0"));
+        assert!(value.dot_has("x.<"));
+        assert!(value.dot_has("x.>"));
+        assert!(value.dot_has("x.>.foo"));
+        assert!(!value.dot_has("x.banana"));
+        assert!(!value.dot_has("x.>.foo.bar"));
+        assert!(value.dot_has_checked("x.banana").is_err());
+
+        if let Ok(false) = value.dot_has_checked("x.9999") {
+            //
+        } else {
+            panic!("dot_has_checked failed");
+        }
     }
 
     #[test]

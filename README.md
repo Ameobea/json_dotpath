@@ -4,6 +4,10 @@ Access members of nested JSON arrays and objects using "dotted paths".
 
 ## Changes
 
+### 1.1.0
+
+Added `dot_has()` and `dot_has_checked()`
+
 ### 1.0.3
 
 Replaced `failure` with `thiserror`, implement `std::error::Error` for the error type.
@@ -63,6 +67,8 @@ Five principal methods are added by the `DotPaths` trait to `serde_json::Value`,
 - `dot_remove(path)` - remove a value by path
 - `dot_get_or(path, def)` - get value, or a custom default
 - `dot_get_or_default(path)` - get value, or `Default::default()`
+- `dot_has_checked(path)` - checks if a path is valid and a value exists there
+- `dot_has(path)` - the same as above, but errors silently become `false`
 
 All methods are generic and take care of serializing and deserializing the stored / retrieved
 data. `dot_get_mut()` is an exception and returns `&mut Value`.
@@ -118,7 +124,7 @@ See unit tests for more examples.
 
 ### Special handling of Null
 
-JSON null in an object can transparently become an array or object by setting it's members (even nested), 
+JSON null can transparently become an array or object by setting it's members (even nested), 
 as if it was an empty array or object. Whether it should become an array or object depends on the key used to index into it.
 
 - numeric key turns null into an array (only `0` and the special array operators are allowed, 
@@ -126,6 +132,8 @@ as if it was an empty array or object. Whether it should become an array or obje
 - any other key turns it into a map
 - any key starting with an escape creates a map as well (e.g. `\0.aaa` turns `null` into `{"0": {"aaa": …} }` )
 
-JSON null is considered an empty value and is transformed into `Ok(None)` when retrieved, as it can not be deserialized.
+JSON null is considered an empty value and is transformed into `Ok(None)` when retrieved, 
+as it can not be deserialized.
 
-Setting a value to `Value::Null` works as expected and places a JSON null in the object.
+Setting a value to `Value::Null` works as expected and places a JSON null in the object, the same
+applies when getting a mutable reference.
