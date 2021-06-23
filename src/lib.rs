@@ -717,9 +717,9 @@ impl DotPaths for Vec<serde_json::Value> {
                 })?,
         };
 
-        if index > self.len() {
-            // equal is OK, that means append. More is an error
-            return Err(BadIndex(index));
+        // Insert in null values up through this element
+        while index > self.len() {
+            self.push(serde_json::Value::Null);
         }
 
         if let Some(subpath) = sub {
